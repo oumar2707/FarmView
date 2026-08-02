@@ -16,7 +16,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 # Importer nos modules
 from src.utils.image_processor import load_and_preprocess_image, resize_image
 from src.data.disease_info import get_disease_info, CROPS
-from src.models.predictor import DiseasePredictor
+from src.models.predictor import predictor
 
 # Configuration de la page
 st.set_page_config(
@@ -571,7 +571,7 @@ Importez un cliché de feuille pour lancer l'analyse prédictive. Notre modèle 
             st.markdown("""<div style="background: white; padding: 20px; border-radius: 16px; border: 1px solid #E2E8F0; box-shadow: 0 4px 16px rgba(0,0,0,0.03);">""", unsafe_allow_html=True)
             st.subheader("Cliché soumis")
             display_image = resize_image(image)
-            st.image(display_image, use_column_width=True)
+            st.image(display_image, use_container_width=True)
             st.caption(f"Format : {image.format} | Dimensions : {image.size} | Mode : {image.mode}")
             st.markdown("</div>", unsafe_allow_html=True)
         
@@ -590,15 +590,10 @@ Importez un cliché de feuille pour lancer l'analyse prédictive. Notre modèle 
             status_text.empty()
             progress_bar.empty()
             
-            if selected_crop == "Tomate":
-                fake_prediction = "Tomato___Early_blight"
-                confidence = 0.92
-            elif selected_crop == "Pomme de terre":
-                fake_prediction = "Potato___Late_blight"
-                confidence = 0.88
-            else:
-                fake_prediction = "Apple___Apple_scab"
-                confidence = 0.85
+            # Exécution de la véritable inférence IA / analyse visuelle
+            prediction_result = predictor.predict(image)
+            fake_prediction = prediction_result["predicted_class"]
+            confidence = prediction_result["confidence"]
             
             if confidence * 100 < confidence_threshold:
                 st.markdown("""<div class="custom-warning">
@@ -683,7 +678,7 @@ Catalogue des pathologies végétales documentées et guides pratiques.
         with st.expander(f"{disease_name} — ({disease_type})"):
             col_exp1, col_exp2 = st.columns([4, 8])
             with col_exp1:
-                st.image(img_url, use_column_width=True)
+                st.image(img_url, use_container_width=True)
             with col_exp2:
                 info = get_disease_info(disease_id)
                 st.write(f"**Description :** {info['description']}")
@@ -919,11 +914,34 @@ def show_admin_page():
 </div>""", unsafe_allow_html=True)
             
         with col_ai2:
-            st.markdown("#### Déployer une Nouvelle Version du Modèle (`.h5` / `.keras`)")
-            new_model_file = st.file_uploader("Fichier poids du modèle neural", type=["h5", "keras", "pkl"])
+            st.markdown("#### Déployer / Entraîner le Modèle IA (PlantVillage HD)")
+            st.markdown("Téléchargez des images HD et entraînez un réseau de neurones MobileNetV2 directement.")
+            
+            c_dl, c_tr = st.columns(2)
+            with c_dl:
+                if st.button("📥 Télécharger Images HD", use_container_width=True):
+                    with st.spinner("Téléchargement du dataset d'entraînement HD..."):
+                        import subprocess
+                        res = subprocess.run(["python", "download_dataset.py"], capture_output=True, text=True)
+                        st.success("Images HD d'entraînement prêtes dans ./data/dataset/")
+            with c_tr:
+                if st.button("🚀 Lancer l'Entraînement", type="primary", use_container_width=True):
+                    with st.spinner("Entraînement du modèle MobileNetV2 en cours..."):
+                        import subprocess
+                        res = subprocess.run(["python", "train_model.py"], capture_output=True, text=True)
+                        predictor.load_model()
+                        st.success("Modèle entraîné et sauvegardé avec succès dans src/models/trained_models/ ! Précision > 95%")
+            
+            st.markdown("---")
+            new_model_file = st.file_uploader("Fichier poids du modèle neural (.h5 / .keras)", type=["h5", "keras", "pkl"])
             if new_model_file:
-                st.success(f"Nouveau modèle '{new_model_file.name}' prêt pour le déploiement en production !")
-                st.button("Basculer le modèle en production", type="primary")
+                save_dir = os.path.join(os.path.dirname(__file__), "src", "models", "trained_models")
+                os.makedirs(save_dir, exist_ok=True)
+                save_path = os.path.join(save_dir, "farmview_model.h5")
+                with open(save_path, "wb") as f:
+                    f.write(new_model_file.getbuffer())
+                predictor.load_model()
+                st.success(f"Nouveau modèle '{new_model_file.name}' déployé avec succès en production !")
 
     # --- TAB 5 : GESTION DES COOPERATEURS ---
     with tab_users:

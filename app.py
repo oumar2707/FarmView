@@ -4,9 +4,8 @@ Interface ultra-design avec Espace Admin Premium, Carte Géographique & Design C
 """
 
 import streamlit as st
-import numpy as np
 import pandas as pd
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 import sys
 import os
 
@@ -14,9 +13,10 @@ import os
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # Importer nos modules
-from src.utils.image_processor import load_and_preprocess_image, resize_image
 from src.data.disease_info import get_disease_info, CROPS
 from src.models.predictor import predictor
+from src.utils.admin_auth import authenticate_admin
+from streamlit.errors import StreamlitSecretNotFoundError
 
 # Configuration de la page
 st.set_page_config(
@@ -25,315 +25,25 @@ st.set_page_config(
     layout="wide"
 )
 
-# Injection CSS (Super-Design Blanc & Vert avec Navbar Premium)
-st.markdown("""
-<style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Outfit:wght@500;600;700;800&display=swap');
+from src.ui.components import inject_theme, load_test_metrics, render_status_badge
 
-html, body, [class*="css"] {
-    font-family: 'Inter', sans-serif;
-    color: #1E293B;
-}
+inject_theme()
 
-.stApp {
-    background-color: #F8FAFC;
-}
 
-#MainMenu {visibility: hidden;}
-footer {visibility: hidden;}
-header {background-color: transparent !important;}
+def _admin_credentials():
+    email = os.environ.get("FARMVIEW_ADMIN_EMAIL")
+    password = os.environ.get("FARMVIEW_ADMIN_PASSWORD")
+    try:
+        admin_secrets = st.secrets.get("admin", {})
+    except StreamlitSecretNotFoundError:
+        admin_secrets = {}
+    if not isinstance(admin_secrets, dict):
+        admin_secrets = {}
+    return (
+        email or admin_secrets.get("email"),
+        password or admin_secrets.get("password"),
+    )
 
-/* Container du Header Flottant */
-.navbar-wrapper {
-    background: #FFFFFF;
-    border: 1px solid #E2E8F0;
-    border-radius: 16px;
-    padding: 10px 20px;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.04);
-    margin-bottom: 30px;
-}
-
-/* Style uniforme des boutons de navigation */
-div.stButton > button {
-    white-space: nowrap !important;
-    word-break: keep-all !important;
-    font-size: 0.88rem !important;
-    font-weight: 600 !important;
-    height: 42px !important;
-    border-radius: 10px !important;
-    padding: 0 16px !important;
-    background-color: transparent !important;
-    color: #475569 !important;
-    border: 1px solid transparent !important;
-    transition: all 0.2s ease !important;
-    display: flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-}
-
-div.stButton > button:hover {
-    color: #16A34A !important;
-    background-color: #F1F5F9 !important;
-    border-color: #E2E8F0 !important;
-}
-
-div.stButton > button[kind="primary"] {
-    background-color: #16A34A !important;
-    color: #FFFFFF !important;
-    border: 1px solid #16A34A !important;
-    box-shadow: 0 4px 12px rgba(22, 163, 74, 0.2) !important;
-}
-
-div.stButton > button[kind="primary"]:hover {
-    background-color: #15803D !important;
-    color: #FFFFFF !important;
-    border-color: #15803D !important;
-}
-
-/* Image Banner Cards */
-.card-with-img {
-    background: #FFFFFF;
-    border: 1px solid #E2E8F0;
-    border-radius: 16px;
-    overflow: hidden;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.04);
-    transition: all 0.3s ease;
-    height: 100%;
-}
-.card-with-img:hover {
-    transform: translateY(-4px);
-    box-shadow: 0 12px 30px rgba(22, 163, 74, 0.12);
-    border-color: #86EFAC;
-}
-.card-img-header {
-    width: 100%;
-    height: 190px;
-    object-fit: cover;
-}
-.card-body {
-    padding: 24px;
-}
-.card-tag {
-    display: inline-block;
-    padding: 4px 12px;
-    background-color: #DCFCE7;
-    color: #15803D;
-    border-radius: 20px;
-    font-size: 0.75rem;
-    font-weight: 700;
-    letter-spacing: 0.5px;
-    margin-bottom: 12px;
-    text-transform: uppercase;
-}
-.card-title {
-    font-family: 'Outfit', sans-serif;
-    font-size: 1.25rem;
-    font-weight: 700;
-    color: #0F172A;
-    margin-bottom: 10px;
-    line-height: 1.3;
-}
-.card-text {
-    font-size: 0.95rem;
-    color: #475569;
-    line-height: 1.6;
-}
-
-/* Hero Section Split Layout */
-.hero-container {
-    background: linear-gradient(135deg, #F0FDF4 0%, #E0F2FE 100%);
-    border-radius: 24px;
-    padding: 45px 35px;
-    border: 1px solid #DCFCE7;
-    margin-bottom: 35px;
-    box-shadow: 0 4px 24px rgba(22, 163, 74, 0.06);
-}
-.hero-tag {
-    display: inline-block;
-    background-color: #DCFCE7;
-    color: #15803D;
-    padding: 6px 16px;
-    border-radius: 20px;
-    font-size: 0.85rem;
-    font-weight: 700;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-    margin-bottom: 18px;
-}
-.hero-title {
-    font-family: 'Outfit', sans-serif;
-    font-size: 2.8rem;
-    font-weight: 800;
-    color: #0F172A !important;
-    line-height: 1.15;
-    margin-bottom: 18px;
-    letter-spacing: -0.5px;
-}
-.hero-subtitle {
-    font-family: 'Inter', sans-serif;
-    font-size: 1.05rem;
-    color: #475569 !important;
-    line-height: 1.6;
-    margin-bottom: 25px;
-}
-
-/* Workflow Step Cards */
-.step-card {
-    background: #FFFFFF;
-    border: 1px solid #E2E8F0;
-    border-radius: 16px;
-    padding: 24px 20px;
-    text-align: center;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.03);
-    height: 100%;
-}
-.step-num {
-    width: 40px;
-    height: 40px;
-    background-color: #16A34A;
-    color: white;
-    border-radius: 50%;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-weight: 800;
-    font-size: 1.1rem;
-    margin: 0 auto 14px auto;
-    font-family: 'Outfit', sans-serif;
-}
-.stat-num {
-    font-family: 'Outfit', sans-serif;
-    font-size: 1.9rem;
-    font-weight: 800;
-    color: #16A34A;
-}
-.stat-desc {
-    font-size: 0.85rem;
-    color: #64748B;
-    font-weight: 500;
-}
-
-/* Admin Dashboard KPI Cards */
-.admin-kpi-card {
-    background: #FFFFFF;
-    border-radius: 16px;
-    padding: 22px;
-    border: 1px solid #E2E8F0;
-    box-shadow: 0 4px 16px rgba(0,0,0,0.03);
-    position: relative;
-    overflow: hidden;
-}
-.admin-kpi-card::before {
-    content: '';
-    position: absolute;
-    top: 0;
-    left: 0;
-    width: 100%;
-    height: 4px;
-    background: #16A34A;
-}
-.admin-kpi-card.blue::before { background: #0284C7; }
-.admin-kpi-card.amber::before { background: #D97706; }
-.admin-kpi-card.purple::before { background: #9333EA; }
-
-.admin-kpi-val {
-    font-family: 'Outfit', sans-serif;
-    font-size: 2.2rem;
-    font-weight: 800;
-    color: #0F172A;
-    margin: 6px 0;
-}
-.admin-kpi-label {
-    font-size: 0.82rem;
-    font-weight: 600;
-    color: #64748B;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
-/* Widgets Télémétrie */
-.widget-box {
-    background: #FFFFFF;
-    border: 1px solid #E2E8F0;
-    border-radius: 12px;
-    padding: 16px 18px;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
-    margin-bottom: 15px;
-    transition: all 0.2s ease;
-}
-.widget-box:hover {
-    border-color: #16A34A;
-    box-shadow: 0 4px 12px rgba(22, 163, 74, 0.08);
-}
-.widget-label {
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: #64748B;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 4px;
-}
-.widget-value {
-    font-size: 1.2rem;
-    font-weight: 700;
-    color: #0F172A;
-}
-
-/* Badges de Risque */
-.badge-green {
-    display: inline-block;
-    padding: 5px 12px;
-    background-color: #DCFCE7;
-    color: #15803D;
-    border-radius: 20px;
-    font-size: 0.85rem;
-    font-weight: 600;
-}
-.badge-yellow {
-    display: inline-block;
-    padding: 5px 12px;
-    background-color: #FEF9C3;
-    color: #A16207;
-    border-radius: 20px;
-    font-size: 0.85rem;
-    font-weight: 600;
-}
-.badge-red {
-    display: inline-block;
-    padding: 5px 12px;
-    background-color: #FEE2E2;
-    color: #B91C1C;
-    border-radius: 20px;
-    font-size: 0.85rem;
-    font-weight: 600;
-}
-
-/* Inputs & File uploader */
-div[data-testid="stSelectbox"] > div {
-    background-color: #FFFFFF !important;
-    border-radius: 8px !important;
-    border: 1px solid #CBD5E1 !important;
-}
-div[data-testid="stFileUploader"] {
-    background-color: #FFFFFF !important;
-    border: 2px dashed #CBD5E1 !important;
-    border-radius: 12px !important;
-    padding: 24px !important;
-}
-div[data-testid="stFileUploader"]:hover {
-    border-color: #16A34A !important;
-    background-color: #F8FAFC !important;
-}
-
-/* Tabs styling */
-button[data-baseweb="tab"] {
-    font-family: 'Outfit', sans-serif !important;
-    font-weight: 600 !important;
-    font-size: 1.05rem !important;
-    padding: 12px 20px !important;
-}
-</style>
-""", unsafe_allow_html=True)
 
 def main():
     """Application principale FarmView."""
@@ -342,6 +52,8 @@ def main():
         st.session_state.page = "Accueil"
     if 'is_admin_logged_in' not in st.session_state:
         st.session_state.is_admin_logged_in = False
+    if st.session_state.page == "Administration" and not st.session_state.is_admin_logged_in:
+        st.session_state.page = "Connexion"
     
     # --- HEADER / NAVBAR FLOTTANTE PREMIUM ---
     st.markdown('<div class="navbar-wrapper">', unsafe_allow_html=True)
@@ -413,13 +125,19 @@ def show_home_page():
     """Page d'accueil de l'interface publique."""
     
     col_h_text, col_h_img = st.columns([7, 5], gap="large")
+    model_state = (
+        "Un modèle entraîné est chargé."
+        if predictor.model_loaded
+        else "Aucun modèle entraîné valide n'est disponible : aucun diagnostic ne sera produit."
+    )
     
     with col_h_text:
         st.markdown("""<div class="hero-container" style="height: 100%;">
-<div class="hero-tag">FarmView IA — Surveillance Agronomique</div>
-<h1 class="hero-title">Anticipez les maladies des cultures grâce à l'IA</h1>
-<p class="hero-subtitle">Photographiez les feuilles en direct au champ, identifiez instantanément les symptômes foliaires et protégez vos rendements avec des conseils de biocontrôle ciblés.</p>
+<div class="hero-tag">FarmView — aide à la décision</div>
+<h1 class="hero-title">Mieux observer la santé de vos cultures</h1>
+<p class="hero-subtitle">Importez une photo pour vérifier si un modèle entraîné est disponible et consulter les informations phytosanitaires adaptées.</p>
 </div>""", unsafe_allow_html=True)
+        st.info(model_state)
         
         btn_c1, btn_c2 = st.columns(2)
         with btn_c1:
@@ -432,39 +150,28 @@ def show_home_page():
                 st.rerun()
 
     with col_h_img:
-        st.markdown("""<div style="position: relative; border-radius: 24px; overflow: hidden; box-shadow: 0 12px 36px rgba(0,0,0,0.08); border: 4px solid #FFFFFF;">
-<img src="https://images.unsplash.com/photo-1586771107445-d3ca888129ff?auto=format&fit=crop&w=800&q=80" style="width: 100%; height: 380px; object-fit: cover; display: block;" />
-<div style="position: absolute; bottom: 20px; left: 20px; right: 20px; background: rgba(255, 255, 255, 0.95); backdrop-filter: blur(8px); padding: 16px 20px; border-radius: 14px; border: 1px solid rgba(226, 232, 240, 0.8); display: flex; justify-content: space-between; align-items: center;">
-<div>
-<div style="font-size: 0.75rem; font-weight: 700; color: #16A34A; text-transform: uppercase;">Scan IA Actif</div>
-<div style="font-size: 1rem; font-weight: 700; color: #0F172A;">Précision de Détection : 96.5%</div>
-</div>
-<span style="background-color: #DCFCE7; color: #15803D; padding: 4px 10px; border-radius: 10px; font-size: 0.8rem; font-weight: 700;">MobileNetV2</span>
-</div>
-</div>""", unsafe_allow_html=True)
+        st.markdown('<div class="hero-container"><span class="hero-tag">Parcours de diagnostic</span><h3>Photo → analyse vérifiée → ressources</h3><p class="hero-subtitle">La démonstration n’invente pas de résultat si le modèle est absent ou invalide.</p></div>', unsafe_allow_html=True)
 
     st.markdown("<div style='margin-bottom: 40px;'></div>", unsafe_allow_html=True)
 
-    col_s1, col_s2, col_s3, col_s4 = st.columns(4)
+    col_s1, col_s2, col_s3 = st.columns(3)
     with col_s1:
         st.markdown("""<div class="step-card">
-<div class="stat-num">50+</div>
-<div class="stat-desc">Coopératives Partenaires</div>
+<div class="card-tag">1</div>
+<h3>Importer</h3>
+<div class="card-text">Fournissez une photo JPG, JPEG ou PNG de la feuille observée.</div>
 </div>""", unsafe_allow_html=True)
     with col_s2:
         st.markdown("""<div class="step-card">
-<div class="stat-num">1,840+</div>
-<div class="stat-desc">Diagnostics Réalisés</div>
+<div class="card-tag">2</div>
+<h3>Vérifier</h3>
+<div class="card-text">L’application indique explicitement si l’inférence a été faite par un modèle entraîné.</div>
 </div>""", unsafe_allow_html=True)
     with col_s3:
         st.markdown("""<div class="step-card">
-<div class="stat-num">96.5%</div>
-<div class="stat-desc">Précision du Modèle</div>
-</div>""", unsafe_allow_html=True)
-    with col_s4:
-        st.markdown("""<div class="step-card">
-<div class="stat-num">&lt; 2s</div>
-<div class="stat-desc">Temps d'Analyse Moyen</div>
+<div class="card-tag">3</div>
+<h3>Consulter</h3>
+<div class="card-text">Utilisez les informations de maladie comme aide, puis demandez conseil à un spécialiste.</div>
 </div>""", unsafe_allow_html=True)
 
     st.markdown("<div style='margin-bottom: 40px;'></div>", unsafe_allow_html=True)
@@ -475,7 +182,7 @@ def show_home_page():
     
     with col_p1:
         st.markdown("""<div class="card-with-img">
-<img src="https://images.unsplash.com/photo-1530507629858-e4977d30e9e0?auto=format&fit=crop&w=600&q=80" class="card-img-header" />
+<img src="https://images.unsplash.com/photo-1530507629858-e4977d30e9e0?auto=format&fit=crop&w=600&q=80" alt="Illustration agricole, non utilisée pour un diagnostic" class="card-img-header" />
 <div class="card-body">
 <span class="card-tag" style="background-color: #FEE2E2; color: #B91C1C;">Problème Identifié</span>
 <div class="card-title">Diagnostics Tardifs & Pertes de Récolte</div>
@@ -485,17 +192,17 @@ def show_home_page():
         
     with col_p2:
         st.markdown("""<div class="card-with-img">
-<img src="https://images.unsplash.com/photo-1628352081506-83c43123ed6d?auto=format&fit=crop&w=600&q=80" class="card-img-header" />
+<img src="https://images.unsplash.com/photo-1628352081506-83c43123ed6d?auto=format&fit=crop&w=600&q=80" alt="Illustration de culture agricole, non utilisée pour un diagnostic" class="card-img-header" />
 <div class="card-body">
 <span class="card-tag">Solution IA</span>
 <div class="card-title">Vision par Ordinateur au Champ</div>
-<div class="card-text">Algorithme de Deep Learning entraîné sur des milliers de clichés foliaires pour détecter les pathologies et conseiller des soins durables.</div>
+<div class="card-text">Le pipeline permet d’utiliser un modèle entraîné quand il est présent et validé. Aucun résultat de démonstration ne remplace une prédiction.</div>
 </div>
 </div>""", unsafe_allow_html=True)
         
     with col_p3:
         st.markdown("""<div class="card-with-img">
-<img src="https://images.unsplash.com/photo-1500937386664-56d1dfef3854?auto=format&fit=crop&w=600&q=80" class="card-img-header" />
+<img src="https://images.unsplash.com/photo-1500937386664-56d1dfef3854?auto=format&fit=crop&w=600&q=80" alt="Illustration de paysage agricole, non utilisée pour un diagnostic" class="card-img-header" />
 <div class="card-body">
 <span class="card-tag" style="background-color: #E0F2FE; color: #0369A1;">Valeur Produit</span>
 <div class="card-title">Pilotage Réseau & Coopératives</div>
@@ -530,103 +237,124 @@ def show_home_page():
 <div style="font-size: 0.9rem; color: #64748B; line-height: 1.5;">Consultez les recommandations de biocontrôle et les traitements agro-écologiques adaptés à la culture.</div>
 </div>""", unsafe_allow_html=True)
 
-def show_diagnostic_page():
-    """Page de diagnostic."""
-    st.title("Diagnostic IA des Pathologies Foliaires")
-    st.markdown("""<p style="font-size: 1.05rem; color: #475569; margin-bottom: 30px;">
-Importez un cliché de feuille pour lancer l'analyse prédictive. Notre modèle identifie la maladie et génère un protocole de soin.
-</p>""", unsafe_allow_html=True)
-    
-    col_opt1, col_opt2 = st.columns(2)
-    
-    with col_opt1:
-        selected_crop = st.selectbox(
-            "Culture concernée (optionnel)",
-            ["Je ne sais pas"] + CROPS,
-            help="Sélectionner la culture affine l'analyse"
-        )
-    
-    with col_opt2:
-        confidence_threshold = st.slider(
-            "Seuil de confiance minimum (%)",
-            min_value=50,
-            max_value=95,
-            value=75,
-            help="Niveau de confiance minimum exigé"
-        )
-    
-    st.markdown("<div style='margin-bottom: 20px;'></div>", unsafe_allow_html=True)
+    st.warning("FarmView est une aide à la décision et ne remplace pas l’avis d’un agronome ou d’un conseiller phytosanitaire.")
 
-    uploaded_file = st.file_uploader(
-        "Glissez-déposez ou sélectionnez une photo de feuille",
-        type=['jpg', 'jpeg', 'png', 'bmp']
+def show_diagnostic_page():
+    """Run a real model inference or report why no diagnosis is available."""
+    from pathlib import Path
+
+    st.title("Diagnostic des feuilles")
+    st.write(
+        "Importez une image. Une maladie ne sera affichée que si un modèle entraîné "
+        "et compatible produit effectivement une prédiction."
     )
-    
-    if uploaded_file is not None:
-        image = Image.open(uploaded_file)
-        
-        col_res1, col_res2 = st.columns(2, gap="large")
-        
-        with col_res1:
-            st.markdown("""<div style="background: white; padding: 20px; border-radius: 16px; border: 1px solid #E2E8F0; box-shadow: 0 4px 16px rgba(0,0,0,0.03);">""", unsafe_allow_html=True)
-            st.subheader("Cliché soumis")
-            display_image = resize_image(image)
-            st.image(display_image, use_container_width=True)
-            st.caption(f"Format : {image.format} | Dimensions : {image.size} | Mode : {image.mode}")
-            st.markdown("</div>", unsafe_allow_html=True)
-        
-        with col_res2:
-            st.subheader("Résultats de l'Analyse IA")
-            
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            
-            for percent in range(0, 101, 25):
-                status_text.text(f"Traitement par le modèle IA... {percent}%")
-                progress_bar.progress(percent / 100)
-                import time
-                time.sleep(0.08)
-            
-            status_text.empty()
-            progress_bar.empty()
-            
-            # Exécution de la véritable inférence IA / analyse visuelle
-            prediction_result = predictor.predict(image)
-            fake_prediction = prediction_result["predicted_class"]
-            confidence = prediction_result["confidence"]
-            
-            if confidence * 100 < confidence_threshold:
-                st.markdown("""<div class="custom-warning">
-<strong>Diagnostic incertain</strong><br>
-Le niveau de certitude mesuré est inférieur au seuil configuré.
-</div>""", unsafe_allow_html=True)
-                st.info(f"Confiance mesurée : {confidence*100:.1f}% (Seuil requis : {confidence_threshold}%)")
-            else:
-                st.markdown("""<div class="custom-success">
-<strong>Analyse validée avec succès</strong>
-</div>""", unsafe_allow_html=True)
-                
-                disease_info = get_disease_info(fake_prediction)
-                
-                st.metric("Pathologie détectée", disease_info["name"])
-                st.metric("Indice de confiance", f"{confidence*100:.1f}%")
-                
-                st.markdown(f"""<div style="background: white; padding: 20px; border-radius: 14px; border: 1px solid #E2E8F0; margin-top: 15px;">
-<h4 style="color:#0F172A;margin-top:0;">Description clinique</h4>
-<p style="color:#475569;font-size:0.95rem;line-height:1.6;">{disease_info["description"]}</p>
-</div>""", unsafe_allow_html=True)
-                
-                st.markdown("<h4 style='color:#16A34A;margin-top:20px;'>Recommandations de traitement agro-écologique</h4>", unsafe_allow_html=True)
-                for i, treatment in enumerate(disease_info["treatment"], 1):
-                    st.write(f"**{i}.** {treatment}")
-                
-                if disease_info["chemical"] != "Aucun traitement nécessaire":
-                    st.markdown("<h4 style='color:#DC2626;margin-top:20px;'>Option de traitement chimique</h4>", unsafe_allow_html=True)
-                    st.warning(disease_info["chemical"])
-        
-        st.markdown("---")
-        if st.button("Réinitialiser l'analyse", type="secondary"):
-            st.rerun()
+    if not predictor.model_loaded:
+        st.warning("Modèle absent ou invalide : le diagnostic est indisponible.")
+
+    selected_crop = st.selectbox(
+        "Culture observée (facultatif)", ["Je ne sais pas"] + CROPS
+    )
+    uploaded_file = st.file_uploader(
+        "Importer une photo de feuille", type=["jpg", "jpeg", "png"]
+    )
+
+    sample_dir = Path(__file__).resolve().parent / "data" / "demo_samples"
+    demo_samples = sorted(
+        path for path in sample_dir.rglob("*") if path.suffix.lower() in {".jpg", ".jpeg", ".png"}
+    ) if sample_dir.is_dir() else []
+    sample_labels = {path.parent.name: path for path in demo_samples}
+    selected_sample = st.selectbox(
+        "Image d'exemple (données de démonstration)",
+        ["Aucune"] + list(sample_labels),
+    )
+    use_sample = st.button(
+        "Essayer avec une image d'exemple", disabled=selected_sample == "Aucune"
+    )
+
+    image_source = uploaded_file
+    if use_sample and selected_sample in sample_labels:
+        image_source = sample_labels[selected_sample]
+    if image_source is None:
+        st.info("Ajoutez une image pour commencer. Aucune analyse n'a encore été effectuée.")
+        return
+
+    try:
+        with Image.open(image_source) as opened_image:
+            opened_image.load()
+            image = opened_image.convert("RGB")
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        st.error(f"Image invalide ou corrompue : {exc}")
+        return
+
+    st.image(image, caption="Image soumise, convertie en RGB pour l'inférence", use_container_width=True)
+    if predictor.model_loaded:
+        with st.spinner("Inférence du modèle entraîné…"):
+            result = predictor.predict(image)
+    else:
+        result = predictor.predict(image)
+
+    status = result.get("diagnostic_status")
+    if status == "model_unavailable":
+        st.error(result.get("message") or "Aucun modèle valide n'est disponible.")
+        return
+    if status == "inference_error":
+        st.error(result.get("message") or "L'inférence a échoué.")
+        return
+    if result.get("source") != "trained_model" or status not in {
+        "healthy",
+        "disease_detected",
+        "uncertain",
+    }:
+        st.error("Aucune prédiction vérifiable d'un modèle entraîné n'est disponible.")
+        return
+
+    confidence = result.get("confidence")
+    predicted_class = result.get("predicted_class")
+    if not isinstance(confidence, (int, float)) or not predicted_class:
+        st.error("Le modèle a renvoyé un résultat incomplet : aucun diagnostic n'est affiché.")
+        return
+
+    if confidence < 0.75 or status == "uncertain":
+        status = "uncertain"
+    label = {
+        "healthy": "Classe saine prédite par le modèle",
+        "disease_detected": "Classe de maladie prédite par le modèle",
+        "uncertain": "Résultat incertain",
+    }.get(status, "Résultat incertain")
+    render_status_badge(status, label)
+    st.caption("Source : modèle entraîné — score Softmax, non calibré.")
+
+    disease_info = get_disease_info(predicted_class)
+    st.subheader(disease_info["name"])
+    st.write(f"Score du modèle : {confidence:.1%}")
+    st.progress(min(max(float(confidence), 0.0), 1.0))
+
+    if selected_crop != "Je ne sais pas" and selected_crop != disease_info["crop"]:
+        st.warning(
+            f"La classe prédite concerne {disease_info['crop']}, alors que "
+            f"« {selected_crop} » a été sélectionnée. Vérifiez l'image et le résultat."
+        )
+    if status == "uncertain":
+        st.warning("Résultat incertain : aucune recommandation de traitement n'est proposée.")
+    else:
+        st.write(disease_info["description"])
+        if status == "disease_detected":
+            st.markdown("#### Informations de prise en charge")
+            for treatment in disease_info["treatment"]:
+                st.write(f"- {treatment}")
+            if disease_info["chemical"] != "Aucun traitement nécessaire":
+                st.warning(disease_info["chemical"])
+        else:
+            st.success("Aucune maladie n'est prédite pour cette image par le modèle.")
+
+    top_predictions = result.get("top_predictions", [])
+    if top_predictions:
+        st.markdown("#### Classes les plus probables")
+        for class_name, score in top_predictions[:3]:
+            st.write(f"{get_disease_info(class_name)['name']} — {score:.1%}")
+            st.progress(min(max(float(score), 0.0), 1.0))
+
+    st.caption("Aide à la décision uniquement ; faites confirmer le diagnostic par un agronome.")
 
 def show_info_page():
     """Page d'informations."""
@@ -640,7 +368,7 @@ FarmView combine l'agronomie et l'IA pour fournir des outils décisionnels de po
     
     with col_i1:
         st.markdown("""<div class="card-with-img">
-<img src="https://images.unsplash.com/photo-1591857177580-dc82b9ac4e1e?auto=format&fit=crop&w=600&q=80" class="card-img-header" />
+<img src="https://images.unsplash.com/photo-1591857177580-dc82b9ac4e1e?auto=format&fit=crop&w=600&q=80" alt="Illustration agricole générique" class="card-img-header" />
 <div class="card-body">
 <div class="card-title">Notre Mission Agronomique</div>
 <div class="card-text">
@@ -651,11 +379,11 @@ Démocratiser l'accès aux technologies de pointe pour préserver les récoltes,
         
     with col_i2:
         st.markdown("""<div class="card-with-img">
-<img src="https://images.unsplash.com/photo-1567306301408-9b74779a11af?auto=format&fit=crop&w=600&q=80" class="card-img-header" />
+<img src="https://images.unsplash.com/photo-1567306301408-9b74779a11af?auto=format&fit=crop&w=600&q=80" alt="Illustration agricole générique" class="card-img-header" />
 <div class="card-body">
 <div class="card-title">Technologie & Sécurité des Données</div>
 <div class="card-text">
-Modèles de Transfer Learning entraînés sur des banques d'images universitaires certifiées. Vos clichés sont traités localement sans transfert intrusif.
+Le pipeline d'inférence est prévu pour un modèle MobileNetV2. Aucun modèle utilisable n'est fourni actuellement ; aucun diagnostic ne sera simulé.
 </div>
 </div>
 </div>""", unsafe_allow_html=True)
@@ -678,7 +406,11 @@ Catalogue des pathologies végétales documentées et guides pratiques.
         with st.expander(f"{disease_name} — ({disease_type})"):
             col_exp1, col_exp2 = st.columns([4, 8])
             with col_exp1:
-                st.image(img_url, use_container_width=True)
+                st.image(
+                    img_url,
+                    caption="Illustration générique, non représentative d'un diagnostic.",
+                    use_container_width=True,
+                )
             with col_exp2:
                 info = get_disease_info(disease_id)
                 st.write(f"**Description :** {info['description']}")
@@ -692,7 +424,7 @@ Catalogue des pathologies végétales documentées et guides pratiques.
     
     with col_c1:
         st.markdown("""<div class="card-with-img">
-<img src="https://images.unsplash.com/photo-1586771107445-d3ca888129ff?auto=format&fit=crop&w=600&q=80" class="card-img-header" />
+<img src="https://images.unsplash.com/photo-1586771107445-d3ca888129ff?auto=format&fit=crop&w=600&q=80" alt="Illustration agricole générique" class="card-img-header" />
 <div class="card-body">
 <div class="card-title">Guide de prise de vue</div>
 <div class="card-text">
@@ -705,7 +437,7 @@ Catalogue des pathologies végétales documentées et guides pratiques.
         
     with col_c2:
         st.markdown("""<div class="card-with-img">
-<img src="https://images.unsplash.com/photo-1500937386664-56d1dfef3854?auto=format&fit=crop&w=600&q=80" class="card-img-header" />
+<img src="https://images.unsplash.com/photo-1500937386664-56d1dfef3854?auto=format&fit=crop&w=600&q=80" alt="Illustration agricole générique" class="card-img-header" />
 <div class="card-body">
 <div class="card-title">Symptômes cliniques majeurs</div>
 <div class="card-text">
@@ -731,38 +463,69 @@ def show_login_page():
 </div>""", unsafe_allow_html=True)
         
         with st.form("login_form"):
-            email_input = st.text_input("Identifiant Administrateur", value="admin@farmview.ai")
-            password_input = st.text_input("Mot de passe", type="password", value="admin123")
-            remember_me = st.checkbox("Se souvenir de cette session")
+            email_input = st.text_input("Identifiant Administrateur")
+            password_input = st.text_input("Mot de passe", type="password")
             
             submit_login = st.form_submit_button("Se connecter à l'espace Admin", type="primary", use_container_width=True)
             
             if submit_login:
-                if email_input and password_input:
+                expected_email, expected_password = _admin_credentials()
+                if authenticate_admin(
+                    email_input,
+                    password_input,
+                    expected_email,
+                    expected_password,
+                ):
                     st.session_state.is_admin_logged_in = True
                     st.session_state.page = "Administration"
                     st.success("Authentification réussie ! Chargement du tableau de bord...")
                     st.rerun()
                 else:
-                    st.error("Veuillez remplir vos identifiants.")
+                    st.error(
+                        "Identifiants invalides ou configuration administrateur absente. "
+                        "Configurez FARMVIEW_ADMIN_EMAIL et FARMVIEW_ADMIN_PASSWORD "
+                        "ou la section [admin] des secrets Streamlit."
+                    )
 
 def show_admin_page():
     """Espace Administration & Pilotage Agronomique Ultra-Design."""
-    
+    from pathlib import Path
+
+    st.warning(
+        "Données de démonstration : carte, annuaire, alertes et graphiques sont statiques "
+        "et ne décrivent pas des exploitations réelles."
+    )
+    try:
+        metrics = load_test_metrics(
+            Path(__file__).resolve().parent / "reports" / "metrics.json"
+        )
+    except (OSError, ValueError) as exc:
+        st.error(f"Le rapport de métriques est invalide : {exc}")
+        metrics = None
+    test_accuracy = (
+        f"{metrics['test']['accuracy']:.1%}"
+        if metrics is not None
+        else "Non évaluée"
+    )
+    st.info(
+        "Modèle entraîné chargé." if predictor.model_loaded
+        else "Aucun modèle entraîné valide n'est chargé."
+    )
+
     # --- TOP BANNER ADMIN CORPORATE ---
     st.markdown("""<div style="background: linear-gradient(135deg, #0F172A 0%, #1E293B 100%); padding: 28px 32px; border-radius: 20px; color: white; margin-bottom: 30px; box-shadow: 0 10px 30px rgba(15, 23, 42, 0.15); border: 1px solid #334155;">
 <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
 <div>
 <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 8px;">
 <span style="background-color: #16A34A; color: white; padding: 4px 12px; border-radius: 12px; font-size: 0.75rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;">Centre de Commande IA</span>
-<span style="color: #94A3B8; font-size: 0.85rem;">● Synchro GPS : En direct</span>
+<span style="color: #94A3B8; font-size: 0.85rem;">Données de démonstration</span>
 </div>
 <h1 style="font-family: Outfit; font-size: 2.2rem; font-weight: 800; color: #FFFFFF; margin: 0; letter-spacing: -0.5px;">Supervision & Pilotage des Coopératives</h1>
 <p style="color: #94A3B8; margin: 6px 0 0 0; font-size: 1rem;">Cartographie décisionnelle parcelles, détection précoce des épidémies et gouvernance des algorithmes.</p>
 </div>
 <div style="background: rgba(255,255,255,0.08); backdrop-filter: blur(10px); padding: 14px 22px; border-radius: 14px; border: 1px solid rgba(255,255,255,0.12); text-align: right;">
 <div style="font-size: 0.8rem; text-transform: uppercase; color: #94A3B8; font-weight: 600;">Statut Serveurs IA</div>
-<div style="font-family: Outfit; font-size: 1.15rem; font-weight: 700; color: #4ADE80; margin-top: 2px;">● MobileNetV2 Actif</div>
+<div style="font-family: Outfit; font-size: 1.15rem; font-weight: 700; color: #4ADE80; margin-top: 2px;">État affiché ci-dessous</div>
 </div>
 </div>
 </div>""", unsafe_allow_html=True)
@@ -771,27 +534,23 @@ def show_admin_page():
     col_k1, col_k2, col_k3, col_k4 = st.columns(4)
     with col_k1:
         st.markdown("""<div class="admin-kpi-card">
-<div class="admin-kpi-label">Exploitations Connectées</div>
-<div class="admin-kpi-val">142</div>
-<div style="font-size: 0.8rem; color: #16A34A; font-weight: 700;">+8 ce mois-ci</div>
+<div class="admin-kpi-label">Exploitations — démonstration</div>
+<div class="admin-kpi-val">Données statiques</div>
 </div>""", unsafe_allow_html=True)
     with col_k2:
         st.markdown("""<div class="admin-kpi-card blue">
-<div class="admin-kpi-label">Diagnostics Exécutés</div>
-<div class="admin-kpi-val">1,842</div>
-<div style="font-size: 0.8rem; color: #0284C7; font-weight: 700;">+156 cette semaine</div>
+<div class="admin-kpi-label">Diagnostics — démonstration</div>
+<div class="admin-kpi-val">Données statiques</div>
 </div>""", unsafe_allow_html=True)
     with col_k3:
         st.markdown("""<div class="admin-kpi-card amber">
-<div class="admin-kpi-label">Foyers sous Vigilance</div>
-<div class="admin-kpi-val">14</div>
-<div style="font-size: 0.8rem; color: #D97706; font-weight: 700;">3 alertes critiques</div>
+<div class="admin-kpi-label">Vigilances — démonstration</div>
+<div class="admin-kpi-val">Données statiques</div>
 </div>""", unsafe_allow_html=True)
     with col_k4:
-        st.markdown("""<div class="admin-kpi-card purple">
-<div class="admin-kpi-label">Précision Modèle IA</div>
-<div class="admin-kpi-val">96.5%</div>
-<div style="font-size: 0.8rem; color: #9333EA; font-weight: 700;">Validation v2.4</div>
+        st.markdown(f"""<div class="admin-kpi-card purple">
+<div class="admin-kpi-label">Accuracy du jeu de test</div>
+<div class="admin-kpi-val">{test_accuracy}</div>
 </div>""", unsafe_allow_html=True)
 
     st.markdown("<div style='margin-bottom: 35px;'></div>", unsafe_allow_html=True)
@@ -881,7 +640,7 @@ def show_admin_page():
         st.markdown("<h3 style='font-family: Outfit; color: #0F172A;'>Diffusion & Gestion des Alertes Sanitaires</h3>", unsafe_allow_html=True)
         
         st.markdown("""<div class="custom-warning">
-<strong>Alerte Régionale Active :</strong> Risque élevé de développement du Mildiou suite au taux d'humidité élevé dans le secteur Kindia.
+<strong>Exemple d’alerte — données de démonstration :</strong> cette alerte régionale est statique et n'est pas issue d'une mesure.
 </div>""", unsafe_allow_html=True)
         
         st.markdown("#### Publier une Notification Sanitaire Ciblée")
@@ -893,7 +652,10 @@ def show_admin_page():
             
             submit_alert = st.form_submit_button("Diffuser l'Alerte aux Agriculteurs de la Zone", type="primary")
             if submit_alert:
-                st.success(f"Notification d'alerte envoyée avec succès aux agriculteurs du secteur {alert_zone} !")
+                st.info(
+                    "Aucune notification n'a été envoyée : le portail ne dispose pas "
+                    "d'un service de diffusion connecté."
+                )
 
     # --- TAB 4 : SUPERVISION DES MODELES IA ---
     with tab_ai:
@@ -901,47 +663,27 @@ def show_admin_page():
         
         col_ai1, col_ai2 = st.columns(2, gap="large")
         with col_ai1:
-            st.markdown("""<div style="background: white; border: 1px solid #E2E8F0; border-radius: 16px; padding: 24px; box-shadow: 0 4px 16px rgba(0,0,0,0.03);">
-<h4 style="color:#0F172A;margin-top:0;font-family:Outfit;">Fiche Technique Modèle de Production</h4>
-<p style="color:#475569;font-size:0.95rem;line-height:1.7;">
-- <strong>Architecture</strong> : MobileNetV2 (Transfer Learning)<br>
-- <strong>Classes Reconnues</strong> : 38 pathologies végétales<br>
-- <strong>Résolution d'Entrée</strong> : 224 x 224 x 3 pixels<br>
-- <strong>Précision (Val Accuracy)</strong> : 96.5%<br>
-- <strong>Perte (Val Loss)</strong> : 0.118<br>
-- <strong>Temps d'inférence moyen</strong> : 1.4 secondes
-</p>
-</div>""", unsafe_allow_html=True)
+            st.markdown("#### État réel du modèle")
+            st.write(
+                "Un modèle entraîné est chargé."
+                if predictor.model_loaded
+                else "Aucun modèle entraîné valide n'est disponible."
+            )
+            st.write(f"Accuracy mesurée sur le jeu de test : {test_accuracy}.")
+            if metrics is not None:
+                st.caption("Source : reports/metrics.json — jeu de test réservé.")
             
         with col_ai2:
-            st.markdown("#### Déployer / Entraîner le Modèle IA (PlantVillage HD)")
-            st.markdown("Téléchargez des images HD et entraînez un réseau de neurones MobileNetV2 directement.")
-            
-            c_dl, c_tr = st.columns(2)
-            with c_dl:
-                if st.button("📥 Télécharger Images HD", use_container_width=True):
-                    with st.spinner("Téléchargement du dataset d'entraînement HD..."):
-                        import subprocess
-                        res = subprocess.run(["python", "download_dataset.py"], capture_output=True, text=True)
-                        st.success("Images HD d'entraînement prêtes dans ./data/dataset/")
-            with c_tr:
-                if st.button("🚀 Lancer l'Entraînement", type="primary", use_container_width=True):
-                    with st.spinner("Entraînement du modèle MobileNetV2 en cours..."):
-                        import subprocess
-                        res = subprocess.run(["python", "train_model.py"], capture_output=True, text=True)
-                        predictor.load_model()
-                        st.success("Modèle entraîné et sauvegardé avec succès dans src/models/trained_models/ ! Précision > 95%")
-            
-            st.markdown("---")
-            new_model_file = st.file_uploader("Fichier poids du modèle neural (.h5 / .keras)", type=["h5", "keras", "pkl"])
-            if new_model_file:
-                save_dir = os.path.join(os.path.dirname(__file__), "src", "models", "trained_models")
-                os.makedirs(save_dir, exist_ok=True)
-                save_path = os.path.join(save_dir, "farmview_model.h5")
-                with open(save_path, "wb") as f:
-                    f.write(new_model_file.getbuffer())
-                predictor.load_model()
-                st.success(f"Nouveau modèle '{new_model_file.name}' déployé avec succès en production !")
+            st.markdown("#### Préparation et entraînement")
+            st.write(
+                "Le téléchargement et l'entraînement ne sont pas déclenchés depuis "
+                "l'interface. Ils nécessitent un jeu de données vérifié et une validation "
+                "de licence ; consultez scripts/prepare_dataset.py et train_model.py."
+            )
+            st.caption(
+                "Un modèle ne peut pas être remplacé par un fichier isolé : "
+                "l'artefact et ses métadonnées de classes doivent correspondre."
+            )
 
     # --- TAB 5 : GESTION DES COOPERATEURS ---
     with tab_users:

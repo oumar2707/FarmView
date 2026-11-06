@@ -5,41 +5,42 @@ Module de prétraitement des images pour le modèle IA.
 import numpy as np
 from PIL import Image
 import cv2
+import os
 
-def load_and_preprocess_image(image_path, target_size=(224, 224)):
+
+def load_and_preprocess_image(image_path, target_size=(224, 224), preprocess_input=None):
     """
-    Charge et prétraite une image pour la prédiction.
-    
-    Args:
-        image_path: Chemin vers l'image ou objet image
-        target_size: Taille cible pour le modèle (224x224 pour MobileNetV2)
-    
-    Returns:
-        image_array: Image prétraitée normalisée
+    Load an image as RGB and apply the shared MobileNetV2 preprocessing.
     """
-    # Si c'est un chemin de fichier
-    if isinstance(image_path, str):
-        image = Image.open(image_path)
+    if not isinstance(target_size, tuple) or len(target_size) != 2 or any(
+        not isinstance(size, int) or size <= 0 for size in target_size
+    ):
+        raise ValueError("target_size doit contenir deux entiers positifs.")
+
+    if isinstance(image_path, (str, os.PathLike)) or hasattr(image_path, "read"):
+        with Image.open(image_path) as opened_image:
+            opened_image.load()
+            image = opened_image.convert("RGB")
+    elif isinstance(image_path, Image.Image):
+        image = image_path.convert("RGB")
     else:
-        image = image_path
-    
-    # Convertir en RGB si nécessaire
-    if image.mode != 'RGB':
-        image = image.convert('RGB')
-    
-    # Redimensionner
+        raise TypeError("image_path doit être un chemin, un flux binaire ou une image PIL.")
+
+    if image.width <= 0 or image.height <= 0:
+        raise ValueError("L'image est vide.")
+
     image = image.resize(target_size)
-    
-    # Convertir en array numpy
-    image_array = np.array(image)
-    
-    # Normaliser les pixels [0, 255] -> [0, 1]
-    image_array = image_array / 255.0
-    
-    # Ajouter une dimension pour le batch (1, 224, 224, 3)
-    image_array = np.expand_dims(image_array, axis=0)
-    
-    return image_array
+    image_batch = np.expand_dims(np.asarray(image, dtype=np.float32), axis=0)
+    return preprocess_mobilenet_v2(image_batch, preprocess_input)
+
+
+def preprocess_mobilenet_v2(image_batch, preprocess_input=None):
+    """Apply the MobileNetV2 preprocessing function to raw RGB values in [0, 255]."""
+    if preprocess_input is None:
+        from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
+
+    return preprocess_input(np.asarray(image_batch, dtype=np.float32))
+
 
 def resize_image(image, max_size=800):
     """

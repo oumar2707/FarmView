@@ -1,4 +1,3 @@
-import tensorflow as tf
 import numpy as np
 from PIL import Image
 MALADIES_FR = {
@@ -40,30 +39,13 @@ def load_image(image_path, img_size=(224, 224)):
 
 
 def predict_disease(image_path):
-    image = load_image(image_path)
-
-    classes = ["Feuille saine", "Mildiou", "Oïdium", "Rouille"]
-    prediction = np.random.choice(classes)
-
-    # Si la feuille est saine
-    if prediction == "Feuille saine":
-        return {
-            "maladie": "Feuille saine",
-            "description": "La feuille est en bon état et ne présente aucun signe de maladie.",
-            "conseils": "Aucune action nécessaire. Continuer une bonne pratique agricole.",
-            "niveau": "Aucun"
-        }
-
-    # Infos maladie
-    resultat = MALADIES_INFO.get(prediction, {
-        "description": "Maladie inconnue.",
-        "conseils": "Aucun conseil disponible.",
-        "niveau": "Inconnu"
-    })
-
+    """Keep the legacy API safe until it is wired to an evaluated model."""
+    load_image(image_path)
     return {
-        "maladie": prediction,
-        "description": resultat["description"],
-        "conseils": resultat["conseils"],
-        "niveau": resultat["niveau"]
+        "maladie": None,
+        "description": "Aucun diagnostic : aucun modèle entraîné n'est connecté à cette API historique.",
+        "conseils": "Utiliser le moteur DiseasePredictor avec un modèle compatible.",
+        "niveau": "Indisponible",
+        "diagnostic_status": "model_unavailable",
+        "source": "none",
     }

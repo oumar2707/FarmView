@@ -1,178 +1,218 @@
-"""
-Module de prédiction des maladies foliaires avec support du Deep Learning (TensorFlow / Keras MobileNetV2)
-et analyse visuelle par extraction de caractéristiques (OpenCV/HSV).
-"""
+"""Inference for a trained FarmView MobileNetV2 model."""
 
+import json
+import logging
 import os
+from pathlib import Path
+
 import numpy as np
 from PIL import Image
-import cv2
-from src.data.disease_info import DISEASE_INFO, get_disease_info
+
+from src.data.disease_info import DISEASE_INFO
+from src.utils.image_processor import preprocess_mobilenet_v2
+
+logger = logging.getLogger(__name__)
+
 
 class DiseasePredictor:
-    """Prédicteur de maladies foliaires hybride (Deep Learning & Analyse Visuelle)."""
-    
+    """Load a Keras model only when its class metadata is compatible."""
+
     def __init__(self, model_path=None):
         self.model_loaded = False
         self.tf_model = None
-        self.available_classes = list(DISEASE_INFO.keys())
-        
-        # Chemins possibles vers le modèle entraîné
+        self.class_names = []
+        self.available_classes = list(DISEASE_INFO)
+
         if model_path:
-            self.model_paths = [model_path]
+            self.model_paths = [Path(model_path)]
         else:
-            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            base_dir = Path(__file__).resolve().parents[2]
+            model_dir = base_dir / "src" / "models" / "trained_models"
             self.model_paths = [
-                os.path.join(base_dir, "src", "models", "trained_models", "farmview_model.h5"),
-                os.path.join(base_dir, "src", "models", "trained_models", "farmview_model.keras"),
-                os.path.join(base_dir, "model", "farmview_model.h5"),
+                model_dir / "farmview_model.keras",
+                model_dir / "farmview_model.h5",
             ]
-        
+
         self.model_info = {
-            "status": "Analyse Visuelle et Statistiques HSV",
-            "version": "2.0.0",
-            "accuracy": "96.5% (Target MobileNetV2)",
-            "classes": len(self.available_classes),
-            "engine": "OpenCV / TensorFlow"
+            "status": "model_unavailable",
+            "version": None,
+            "accuracy": None,
+            "classes": 0,
+            "engine": None,
+            "source": "none",
         }
-        
-        # Tenter le chargement initial
         self.load_model()
 
+    @staticmethod
+    def _classes_metadata_path(model_path):
+        return model_path.with_name(f"{model_path.stem}.classes.json")
+
+    @staticmethod
+    def _read_class_names(metadata_path):
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        class_names = metadata.get("classes") if isinstance(metadata, dict) else None
+        if (
+            not isinstance(class_names, list)
+            or not class_names
+            or any(not isinstance(name, str) or not name for name in class_names)
+            or len(class_names) != len(set(class_names))
+        ):
+            raise ValueError("Le fichier de classes est vide ou invalide.")
+        if any(name not in DISEASE_INFO for name in class_names):
+            raise ValueError("Le fichier contient une classe absente du catalogue phytosanitaire.")
+        return class_names
+
+    @staticmethod
+    def _output_class_count(model):
+        output_shape = model.output_shape
+        if isinstance(output_shape, list):
+            if len(output_shape) != 1:
+                raise ValueError("Le modèle doit avoir une unique sortie de classification.")
+            output_shape = output_shape[0]
+        if not output_shape or output_shape[-1] is None:
+            raise ValueError("La dimension de sortie du modèle est indéterminée.")
+        return int(output_shape[-1])
+
     def load_model(self):
-        """Tente de charger un modèle Keras/TensorFlow si disponible."""
-        for path in self.model_paths:
-            if os.path.exists(path):
-                try:
-                    import tensorflow as tf
-                    self.tf_model = tf.keras.models.load_model(path)
-                    self.model_loaded = True
-                    self.model_info["status"] = "Modèle Deep Learning (Production MobileNetV2)"
-                    self.model_info["engine"] = "TensorFlow / Keras"
-                    print(f"[FarmView IA] Modèle TensorFlow chargé avec succès depuis : {path}")
-                    return True
-                except Exception as e:
-                    print(f"[FarmView IA] Erreur lors du chargement de {path} : {e}")
-        
+        """Load the first valid Keras artifact with matching class metadata."""
         self.model_loaded = False
+        self.tf_model = None
+        self.class_names = []
+        last_error = "Aucun fichier modèle entraîné n'a été trouvé."
+
+        for path in self.model_paths:
+            if not path.is_file():
+                continue
+            try:
+                classes_path = self._classes_metadata_path(path)
+                if not classes_path.is_file():
+                    raise ValueError(f"Métadonnées de classes absentes : {classes_path}")
+                class_names = self._read_class_names(classes_path)
+
+                import tensorflow as tf
+
+                model = tf.keras.models.load_model(path)
+                if self._output_class_count(model) != len(class_names):
+                    raise ValueError(
+                        "Le nombre de sorties du modèle ne correspond pas au fichier de classes."
+                    )
+
+                self.tf_model = model
+                self.class_names = class_names
+                self.model_loaded = True
+                self.model_info = {
+                    "status": "trained_model",
+                    "version": None,
+                    "accuracy": None,
+                    "classes": len(class_names),
+                    "engine": "TensorFlow / Keras",
+                    "source": "trained_model",
+                    "path": str(path),
+                }
+                logger.info("Modèle compatible chargé : %s", path)
+                return True
+            except Exception as exc:
+                last_error = str(exc)
+                logger.warning("Modèle ignoré (%s) : %s", path, exc)
+
+        self.model_info.update({
+            "status": "model_unavailable",
+            "classes": 0,
+            "engine": None,
+            "source": "none",
+            "error": last_error,
+        })
         return False
 
-    def predict(self, image_input):
-        """
-        Effectue une prédiction sur l'image fournie.
-        
-        Args:
-            image_input: Objet PIL.Image, numpy.ndarray ou chemin de fichier.
-            
-        Returns:
-            dict: Résultats détaillés de la prédiction (classe, confiance, top_3, métadonnées).
-        """
-        # Conversion en Image PIL si nécessaire
-        if isinstance(image_input, str):
-            pil_image = Image.open(image_input).convert('RGB')
-        elif isinstance(image_input, np.ndarray):
-            pil_image = Image.fromarray(image_input).convert('RGB')
-        else:
-            pil_image = image_input.convert('RGB')
+    @staticmethod
+    def _as_rgb_image(image_input):
+        if image_input is None:
+            raise ValueError("Aucune image n'a été fournie.")
+        if isinstance(image_input, (str, os.PathLike)) or hasattr(image_input, "read"):
+            with Image.open(image_input) as image:
+                return image.convert("RGB")
+        if isinstance(image_input, np.ndarray):
+            if image_input.size == 0:
+                raise ValueError("L'image est vide.")
+            return Image.fromarray(np.asarray(image_input).astype(np.uint8)).convert("RGB")
+        if isinstance(image_input, Image.Image):
+            return image_input.convert("RGB")
+        raise TypeError(f"Type d'image non pris en charge : {type(image_input)!r}")
 
-        # 1. Utilisation du modèle Deep Learning TensorFlow s'il est présent
-        if self.model_loaded and self.tf_model is not None:
-            try:
-                img_resized = pil_image.resize((224, 224))
-                img_array = np.array(img_resized) / 255.0
-                img_batch = np.expand_dims(img_array, axis=0)
-                
-                preds = self.tf_model.predict(img_batch)[0]
-                top_indices = np.argsort(preds)[::-1][:3]
-                
-                predicted_class = self.available_classes[top_indices[0]] if top_indices[0] < len(self.available_classes) else "Apple___Apple_scab"
-                confidence = float(preds[top_indices[0]])
-                
-                top_predictions = [
-                    (self.available_classes[idx], float(preds[idx]))
-                    for idx in top_indices if idx < len(self.available_classes)
-                ]
-                
-                return {
-                    "predicted_class": predicted_class,
-                    "confidence": confidence,
-                    "top_predictions": top_predictions,
-                    "model_info": self.model_info
-                }
-            except Exception as err:
-                print(f"[FarmView IA] Erreur inférence TensorFlow, fallback sur l'analyseur visuel : {err}")
-
-        # 2. Moteur d'analyse visuelle par extraction de caractéristiques HSV (Color/Necrotic Analysis)
-        return self._visual_feature_prediction(pil_image)
-
-    def _visual_feature_prediction(self, pil_image):
-        """Analyse les pixels et caractéristiques chromatiques de la feuille pour déterminer le diagnostic."""
-        cv_img = np.array(pil_image)
-        hsv_img = cv2.cvtColor(cv_img, cv2.COLOR_RGB2HSV)
-        
-        # Masque pour la végétation (Vert)
-        lower_green = np.array([25, 40, 40])
-        upper_green = np.array([85, 255, 255])
-        green_mask = cv2.inRange(hsv_img, lower_green, upper_green)
-        
-        # Masque pour les taches jaunes/chlorotiques (Tavelure, Rouille, Mildiou précoce)
-        lower_yellow = np.array([12, 50, 50])
-        upper_yellow = np.array([25, 255, 255])
-        yellow_mask = cv2.inRange(hsv_img, lower_yellow, upper_yellow)
-        
-        # Masque pour les lésions brunes/nécrotiques (Pourriture noire, Mildiou tardif)
-        lower_brown = np.array([0, 40, 20])
-        upper_brown = np.array([18, 255, 200])
-        brown_mask = cv2.inRange(hsv_img, lower_brown, upper_brown)
-        
-        total_pixels = cv_img.shape[0] * cv_img.shape[1]
-        green_ratio = np.count_nonzero(green_mask) / total_pixels
-        yellow_ratio = np.count_nonzero(yellow_mask) / total_pixels
-        brown_ratio = np.count_nonzero(brown_mask) / total_pixels
-        
-        # Calcul de décision basé sur la distribution chromatique réelle
-        if green_ratio > 0.65 and brown_ratio < 0.05 and yellow_ratio < 0.08:
-            predicted_class = "Apple___healthy"
-            confidence = min(0.98, 0.85 + (green_ratio * 0.12))
-        elif brown_ratio > 0.10 or (brown_ratio > 0.05 and yellow_ratio > 0.10):
-            if brown_ratio > yellow_ratio:
-                predicted_class = "Apple___Black_rot"
-            else:
-                predicted_class = "Potato___Late_blight"
-            confidence = min(0.96, 0.82 + ((brown_ratio + yellow_ratio) * 0.3))
-        elif yellow_ratio > 0.06:
-            predicted_class = "Tomato___Early_blight"
-            confidence = min(0.95, 0.84 + (yellow_ratio * 0.4))
-        else:
-            predicted_class = "Apple___Apple_scab"
-            confidence = 0.88
-
-        # Formater les scores
-        all_scores = {}
-        for cls in self.available_classes:
-            if cls == predicted_class:
-                all_scores[cls] = confidence
-            else:
-                all_scores[cls] = (1.0 - confidence) / max(1, (len(self.available_classes) - 1))
-        
-        top_classes = sorted(all_scores.items(), key=lambda x: x[1], reverse=True)[:3]
-        
+    def _unavailable_result(self, status, message):
         return {
-            "predicted_class": predicted_class,
-            "confidence": confidence,
-            "all_predictions": all_scores,
-            "top_predictions": top_classes,
+            "predicted_class": None,
+            "confidence": None,
+            "top_predictions": [],
+            "diagnostic_status": status,
+            "source": "none",
+            "message": message,
             "model_info": self.model_info,
-            "metrics": {
-                "green_ratio": round(green_ratio, 3),
-                "yellow_ratio": round(yellow_ratio, 3),
-                "brown_ratio": round(brown_ratio, 3)
-            }
         }
 
+    def predict(self, image_input):
+        """Predict from a trained model or explicitly report a non-diagnostic state."""
+        image = self._as_rgb_image(image_input)
+        if not self.model_loaded or self.tf_model is None:
+            return self._unavailable_result(
+                "model_unavailable",
+                "Aucun modèle entraîné et compatible n'est disponible.",
+            )
+
+        try:
+            raw_batch = np.expand_dims(
+                np.asarray(image.resize((224, 224)), dtype=np.float32), axis=0
+            )
+            import tensorflow as tf
+
+            batch = preprocess_mobilenet_v2(
+                raw_batch,
+                tf.keras.applications.mobilenet_v2.preprocess_input,
+            )
+            output = np.asarray(self.tf_model.predict(batch, verbose=0))
+            if output.ndim != 2 or output.shape[0] != 1:
+                raise ValueError("Le modèle a renvoyé une forme de sortie invalide.")
+
+            scores = output[0]
+            if len(scores) != len(self.class_names):
+                raise ValueError("Les sorties du modèle ne correspondent pas aux classes.")
+            if (
+                not np.all(np.isfinite(scores))
+                or np.any(scores < 0)
+                or np.any(scores > 1)
+                or not np.isclose(float(scores.sum()), 1.0, atol=1e-3)
+            ):
+                raise ValueError("Le modèle a renvoyé des scores Softmax invalides.")
+
+            indices = np.argsort(scores)[::-1][:3]
+            top_predictions = [
+                (self.class_names[index], float(scores[index])) for index in indices
+            ]
+            predicted_class, confidence = top_predictions[0]
+            if confidence < 0.75:
+                status = "uncertain"
+            elif predicted_class.endswith("___healthy"):
+                status = "healthy"
+            else:
+                status = "disease_detected"
+
+            return {
+                "predicted_class": predicted_class,
+                "confidence": confidence,
+                "top_predictions": top_predictions,
+                "diagnostic_status": status,
+                "source": "trained_model",
+                "message": None,
+                "model_info": self.model_info,
+            }
+        except Exception as exc:
+            logger.exception("Erreur pendant l'inférence du modèle")
+            return self._unavailable_result(
+                "inference_error", f"L'inférence du modèle a échoué : {exc}"
+            )
+
     def get_model_info(self):
-        """Retourne les informations du modèle."""
         return self.model_info
 
-# Instance singleton pour réutilisation
+
 predictor = DiseasePredictor()
